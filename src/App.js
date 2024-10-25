@@ -1,11 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, {useEffect, useRef, useState} from 'react';
 import { debounce } from 'lodash';
 import './App.css';
 import googleCalendarPlugin from '@fullcalendar/google-calendar';
 import FullCalendar from "@fullcalendar/react";
-import { gapi } from 'gapi-script';
 import dayGridPlugin from '@fullcalendar/daygrid';
-// import axios from "axios";
+import Long from 'long'
+import axios from "axios";
 
 function App() {
     //크기 조절
@@ -44,7 +44,7 @@ function App() {
             }}>
                 <div>
                     <p className="stroeName"
-                       style={{ fontSize: 30, lineHeight: '100%', color: 'rgba(124, 110, 20, 1)' }}>공방친구</p>
+                       style={{fontSize: 30, lineHeight: '100%', color: 'rgba(124, 110, 20, 1)'}}>공방친구</p>
                 </div>
                 <div className="search" style={{
                     width: 700,
@@ -58,8 +58,8 @@ function App() {
                     borderStyle: 'solid',
                 }}>
                     <img className="searchImage"
-                         style={{ width: 50, height: 50, borderRadius: 8 }}
-                         src="https://via.placeholder.com/50x50" alt="search" />
+                         style={{width: 50, height: 50, borderRadius: 8}}
+                         src="https://via.placeholder.com/50x50" alt="search"/>
                 </div>
                 <div className="profile" style={{
                     display: 'inline-flex',
@@ -68,12 +68,12 @@ function App() {
                 }}>
                     <div>
                         <img className="image"
-                             style={{ width: 70, height: 70, borderRadius: 9999 }}
-                             src="https://via.placeholder.com/70x70" alt="profile" />
+                             style={{width: 70, height: 70, borderRadius: 9999}}
+                             src="https://via.placeholder.com/70x70" alt="profile"/>
                     </div>
                     <div>
                         <p className="name"
-                           style={{ width: 165, height: 50, fontSize: 30, lineHeight: '100%', color: 'black' }}>
+                           style={{width: 165, height: 50, fontSize: 30, lineHeight: '100%', color: 'black'}}>
                             독고순광</p>
                     </div>
                 </div>
@@ -84,38 +84,58 @@ function App() {
     //카카오톡 로그인전 초기화
     useEffect(() => {
         if (window.Kakao && !window.Kakao.isInitialized()) {
-        window.Kakao.init(process.env.REACT_APP_KAKAOTALK_API_KEY);
-        console.log('Kakao 초기화 완료');
-    }
-}, [])
+            window.Kakao.init(process.env.REACT_APP_KAKAOTALK_API_KEY);
+            console.log('Kakao 초기화 완료');
+        }
+    }, [])
 
     //카카오톡 로그인
-    const handleLoginAndSend = (eventTitle) => {
+    const handleLoginAndSend = (eventTitle, products) => {
         console.log('로그인 시도');
         window.Kakao.Auth.login({
             scope: 'talk_message',
             success: (authObj) => {
-                console.log('로그인 성공',authObj);
-                sendKakaoMessage(eventTitle);
+                console.log('로그인 성공', authObj);
+                sendKakaoMessage(eventTitle, products);
             },
             fail: (err) => {
-                console.error('로그인 실패',err);
+                console.error('로그인 실패', err);
                 alert('로그인 실패');
             }
         });
     };
 
     //카카오톡 메세지 전송
-    const sendKakaoMessage = (eventTitle) => {
+    const sendKakaoMessage = (eventTitle, products) => {
         console.log('메시지 전송 시도');
         const accessToken = window.Kakao.Auth.getAccessToken();
         if (window.Kakao && window.Kakao.isInitialized() && window.Kakao.Auth.getAccessToken()) {
             console.log('액세스 토큰:', accessToken);
+
+            if (products.length === 0) {
+                alert('추천 선물이 없습니다.');
+                return; // 함수를 종료
+            }
+
+            console.log("Product Name:", products.productName);
+            console.log("Product Price:", products.productPrice);
+
             window.Kakao.API.request({
                 url: '/v2/api/talk/memo/send',
                 data: {
                     template_id: 108613,
-                    template_args:{'${eventTitle}':`${eventTitle}`}
+                    template_args: {
+                        '${eventTitle}': `${eventTitle}`,
+
+                        '${giftName1}': products[0].productName, // 현재 제품 이름
+                        '${giftPrice1}': products[0].productPrice+'원',
+
+                        '${giftName2}': (products[1]!=null?products[1].productName:''),
+                        '${giftPrice2}': (products[1]!=null?products[1].productPrice+'원':''),
+
+                        '${giftName3}': (products[2]!=null?products[2].productName:''),
+                        '${giftPrice3}': (products[2]!=null?products[2].productPrice+'원':'')
+                    },
                 },
             })
                 .then(function (response) {
@@ -125,49 +145,93 @@ function App() {
                     console.error('메시지 전송 실패', error);
                     alert(`메시지 전송 실패: ${error.response ? error.response.data : error.message}`);
                 });
+
         } else {
             alert('로그인이 필요합니다.');
         }
     };
 
-    //7일 전 일정인지 체크
-    function isWithin7Days(eventDate) {
+    //3일 전 일정인지 체크
+    function isWithin3Days(eventDate) {
         const today = new Date();
         const eventDateObj = new Date(eventDate);
-        const sevenDaysLater = new Date();
-        sevenDaysLater.setDate(today.getDate() + 7);
+        const threeDaysLater = new Date();
+        threeDaysLater.setDate(today.getDate() + 3);
 
-        return eventDateObj >= today && eventDateObj <= sevenDaysLater;
+        return eventDateObj >= today && eventDateObj <= threeDaysLater;
     }
 
-    const checkTodayEvents = (eventInfo) => {
-        const today = new Date();
-        const sevenDaysAgo = new Date();
+    //물품 기반 추천
+    let userNo = Long.fromValue(4);
+
+    //이벤트 모음
+    const events = [
+        '생일',
+        '어린이날',
+        '설날',
+        '추석',
+    ]
+
+    const [hasRun, setHasRun] = useState(false);
+
+    const [products, setProducts] = useState([]);
+
+    const checkTodayEvents = async (eventInfo) => {
         const eventDate = new Date(eventInfo.event.start);
-        sevenDaysAgo.setDate(today.getDate()+7);
-        const eventName1 = '생일'; // 찾고자 하는 일정 이름
-        const eventName2 = '어린이날';
-        const eventName3 = '크리스마스';
-        const eventName4 = '설날';
-        const eventName5 = '추석';
 
-
-        if (isWithin7Days(eventDate) && eventInfo.event.title.includes(eventName1)) {
-            console.log('오늘의 일정:', eventInfo.event.title);
-            handleLoginAndSend(eventInfo.event.title)
-        }else if (isWithin7Days(eventDate) && eventInfo.event.title.includes(eventName2)){
-            console.log('오늘의 일정:', eventInfo.event.title);
-            handleLoginAndSend(eventInfo.event.title)
-        }else if (isWithin7Days(eventDate) && eventInfo.event.title.includes(eventName3)){
-            console.log('오늘의 일정:', eventInfo.event.title);
-            handleLoginAndSend(eventInfo.event.title)
-        }else if (isWithin7Days(eventDate)&& eventInfo.event.title.includes(eventName4)){
-            console.log('오늘의 일정:', eventInfo.event.title);
-            handleLoginAndSend(eventInfo.event.title)
-        }else if (isWithin7Days(eventDate)&& eventInfo.event.title.includes(eventName5)){
-            console.log('오늘의 일정:', eventInfo.event.title);
-            handleLoginAndSend(eventInfo.event.title)
+        if (hasRun || !isWithin3Days(eventDate)) {
+            return;
         }
+
+       setHasRun(true);
+
+        //데이터 불러오기
+        try {
+            // 상품 번호 가져오기
+            const response = await axios.get(`/api/productNo?userNo=${userNo}`);
+
+            // 상품 번호가 유효한지 확인
+            if (response.data && response.data.length > 0) {
+                const productNos = response.data.join(',');
+
+                // 상품 정보 가져오기
+                const productResponse = await axios.get(`/api/product?productNos=${productNos}`);
+                const productData = productResponse.data;
+                console.log('Product response data:', productData);
+
+                // 상태 업데이트
+                setProducts(productData);
+
+
+                // 이벤트 선정 및 메세지 전송
+                for (let i = 0; i < events.length; i++) {
+                    if (eventInfo.event.title.includes(events[i])) {
+                        console.log('3일 후 일정:', eventInfo.event.title);
+
+                        const shortEvent = events[i];
+
+                        const requestData = {
+                            products: productData,  // productData가 올바른 배열 형식인지 확인
+                            event: shortEvent // 직접 할당
+                        };
+
+
+                        const recommendGiftResponse = await axios.post(`/api/gift`, requestData);
+
+                        const recommendGifts =recommendGiftResponse.data;
+
+                        // 메세지 전송 함수 호출
+                        handleLoginAndSend(eventInfo.event.title, recommendGifts);
+                        console.log('Recommended Gifts:', recommendGifts);
+                    }
+                }
+            } else {
+                console.warn('상품 번호가 없습니다.');
+            }
+        } catch (error) {
+            console.error('Error:', error);
+        }
+
     };
 
     //중간에 올 내용
@@ -183,7 +247,7 @@ function App() {
                               googleCalendarApiKey={process.env.REACT_APP_GOOGLECALENDAR_API_KEY}
                               eventSources={[
                                   {
-                                      googleCalendarId: '0854f205d29ebd36ef99ff75db7aab5b34cf1c3e9b3f909d4fe69035ec9a2cec@group.calendar.google.com',
+                                      googleCalendarId: 'ss4310778@gmail.com',
                                       backgroundColor: '#ceadee',
                                       display: 'block',
                                       borderColor: '#CEADEEFF'
@@ -202,10 +266,9 @@ function App() {
 
     return (
         <div>
-            <TopHandComponent />
-            <MiddleHandComponent />
+            <TopHandComponent/>
+            <MiddleHandComponent/>
         </div>
     );
 }
-
 export default App;
